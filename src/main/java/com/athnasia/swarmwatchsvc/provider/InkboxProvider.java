@@ -21,6 +21,10 @@ public class InkboxProvider implements PhoneProvider {
     private String path(String value) { return URLEncoder.encode(value, StandardCharsets.UTF_8); }
     public Identity create(String id, String name, String company, String goal, String mission) {
         VoiceInstructions.render(name, company, goal, mission);
+        var subscription = http.send("Inkbox", "GET", base + "/billing/subscription", headers(), null, false);
+        var capacity = subscription.path("entitlements").path("phone_numbers");
+        if (capacity.isIntegralNumber() && capacity.asLong() == 0)
+            throw new ProviderException("Inkbox account includes 0 dedicated phone numbers. Enable VoIP phone capacity in Inkbox before creating an agent.");
         String handle = "sw-" + id;
         var request = new LinkedHashMap<String, Object>();
         request.put("agent_handle", handle); request.put("display_name", name);

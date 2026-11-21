@@ -21,6 +21,7 @@ import java.util.regex.Pattern;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.slf4j.LoggerFactory;
 
 @Service
 public class AgentService {
@@ -95,6 +96,7 @@ public class AgentService {
             VoiceInstructions.render(agent.name, agent.company, agent.goal, mission);
             synchronized (lock(tenant, agent.id)) {
             repository.save(agent);
+            String stage = "Inkbox identity and phone setup";
             try {
                 var identity = phones.create(agent.id, agent.name, agent.company, agent.goal, mission);
                 agent.providerIdentityId = identity.id();
@@ -103,10 +105,14 @@ public class AgentService {
                 agent.phone = identity.phone();
                 agent.voiceMission = mission;
                 repository.save(agent);
+                stage = "OpenAI file-search setup";
                 if (knowledge != null) knowledge.ensureReady(agent, () -> repository.save(agent));
                 agent.status = "active";
                 repository.save(agent);
             } catch (RuntimeException failure) {
+                String reason = "Agent provisioning failed during " + stage + ": " + visible(failure);
+                LoggerFactory.getLogger(AgentService.class).warn("Agent provisioning failed; stage={}; failureType={}; reason={}",
+                        stage, failure.getClass().getSimpleName(), visible(failure));
                 try {
                     if (knowledge != null) knowledge.delete(agent, () -> repository.save(agent));
                     phones.delete(agent.providerHandle);
@@ -114,10 +120,12 @@ public class AgentService {
                 } catch (RuntimeException cleanupFailure) {
                     agent.deletionRequested = true;
                     agent.status = "error";
-                    agent.lastError = "Provisioning failed and cleanup needs retry. Delete this agent to retry cleanup.";
+                    agent.lastError = reason + " Cleanup needs retry. Delete this agent to retry cleanup.";
+                    LoggerFactory.getLogger(AgentService.class).warn("Provisioning cleanup failed; failureType={}; reason={}",
+                            cleanupFailure.getClass().getSimpleName(), visible(cleanupFailure));
                     repository.save(agent);
                 }
-                throw new ApiException(503, "Agent provisioning failed. Refresh agents and retry; any incomplete identity remains available for cleanup.");
+                throw new ApiException(503, reason + " Refresh agents; any incomplete identity remains available for cleanup.");
             }
             events.publishEvent(new AgentCreatedEvent(tenant, agent.id, agent.name, agent.company, agent.goal, agent.email, agent.phone));
             return view(agent);

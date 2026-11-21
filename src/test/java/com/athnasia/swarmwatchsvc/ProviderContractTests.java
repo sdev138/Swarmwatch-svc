@@ -20,6 +20,7 @@ class ProviderContractTests {
     String base;
     String scoreReply = "{\"answers\":[{\"type\":\"score\",\"name\":\"goal_alignment\",\"score\":3.1,\"confidence\":0.8,\"probabilities\":[]}]}";
     boolean failConfiguration;
+    int phoneCapacity = 3;
     String responseReply;
     final Secrets keys = new Secrets() { public String openAiKey() { return "fixture-openai"; } public String inkboxKey() { return "fixture-inkbox"; } };
 
@@ -35,6 +36,7 @@ class ProviderContractTests {
             if (path.equals("/v1/responses")) {
                 reply = responseReply == null ? "{\"id\":\"resp-fixture\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Release verified; one blocker remains.\"}]}]}" : responseReply;
             } else if (path.equals("/v1/decisions")) reply = scoreReply;
+            else if (path.equals("/api/v1/billing/subscription")) reply = "{\"entitlements\":{\"phone_numbers\":" + phoneCapacity + "}}";
             else if (path.equals("/api/v1/identities") && exchange.getRequestMethod().equals("POST"))
                 reply = "{\"id\":\"ink-id\",\"agent_handle\":\"sw-agent-id\",\"email_address\":\"agent@inkboxmail.com\",\"phone_number\":{\"id\":\"number-id\",\"number\":\"+14155550100\"}}";
             else if (path.equals("/api/v1/phone/hosted-agent-config") && failConfiguration) { status = 502; reply = "{\"detail\":\"provider failure fixture-inkbox\"}"; }
@@ -112,7 +114,7 @@ class ProviderContractTests {
         var identity = provider.create("agent-id", "Scout", "Acme", "Verify releases", "Ship trustworthy software");
         assertThat(identity.email()).isEqualTo("agent@inkboxmail.com");
         assertThat(identity.phone()).isEqualTo("+14155550100");
-        var create = requests.getFirst();
+        var create = requests.stream().filter(request -> request.path().equals("/api/v1/identities") && request.method().equals("POST")).findFirst().orElseThrow();
         assertThat(create.auth()).isEqualTo("fixture-inkbox");
         assertThat(create.body().path("mailbox").has("sending_domain")).isTrue();
         assertThat(create.body().path("mailbox").path("sending_domain").isNull()).isTrue();
@@ -132,6 +134,13 @@ class ProviderContractTests {
         provider.delete(identity.handle());
         assertThat(requests.getLast().path()).isEqualTo("/api/v1/identities/sw-agent-id");
         assertThat(requests.getLast().method()).isEqualTo("DELETE");
+    }
+    @Test void zeroDedicatedPhoneCapacityStopsBeforeCreatingAnIdentity() {
+        phoneCapacity = 0;
+        var provider = new InkboxProvider(HttpClient.newHttpClient(), json, keys, base + "/api/v1");
+        assertThatThrownBy(() -> provider.create("agent-id", "Scout", "Acme", "Verify releases", "Ship trustworthy software"))
+                .isInstanceOf(ProviderException.class).hasMessageContaining("0 dedicated phone numbers").hasMessageContaining("Inkbox");
+        assertThat(requests).noneMatch(request -> request.method().equals("POST"));
     }
     @Test void failedVoiceConfigurationCompensatesIdentityWithoutLeakingProviderBody() {
         failConfiguration = true;

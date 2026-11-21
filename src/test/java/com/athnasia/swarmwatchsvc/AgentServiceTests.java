@@ -11,6 +11,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.*;
 import java.util.concurrent.*;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import static org.assertj.core.api.Assertions.*;
 
 class AgentServiceTests {
@@ -24,6 +27,15 @@ class AgentServiceTests {
     @BeforeEach void mission() { service.knowledgeResources(knowledge); service.computerExecutor(computer); service.mission("alice", "Ship trustworthy software"); service.mission("bob", "Keep customer data private"); }
     AgentView create(String tenant, String name) { return service.create(tenant, name, "Acme", "Verify releases; call +14155550111 if the owner asks"); }
 
+    @Test @ExtendWith(OutputCaptureExtension.class)
+    void provisioningFailureExposesItsSafeProviderReasonAndLogsTheStage(CapturedOutput output) {
+        phones.provisioningFailure = new ProviderException("Inkbox account includes 0 dedicated phone numbers. Enable VoIP capacity in Inkbox.");
+        assertThatThrownBy(() -> create("alice", "Scout"))
+                .isInstanceOf(ApiException.class).hasMessageContaining("Inkbox identity and phone setup")
+                .hasMessageContaining("0 dedicated phone numbers");
+        assertThat(output).contains("Agent provisioning failed", "Inkbox identity and phone setup", "0 dedicated phone numbers");
+        assertThat(service.list("alice")).isEmpty();
+    }
     @Test void simultaneousCreatesNeverExceedThree() throws Exception {
         try (var pool = Executors.newFixedThreadPool(12)) {
             var start = new CountDownLatch(1);
@@ -225,6 +237,7 @@ class AgentServiceTests {
     }
     static class FixturePhones extends LocalPhoneProvider {
         int calls; int deletes; boolean failDelete; String lastMission;
+        ProviderException provisioningFailure;
         CountDownLatch createEntered; CountDownLatch createRelease;
         List<PhoneProvider.Transcript> transcripts = List.of();
         @Override public Call call(AgentState agent, String to, String reason) { calls++; return new Call("phone-call-id", "ringing"); }
@@ -232,6 +245,7 @@ class AgentServiceTests {
         @Override public List<PhoneProvider.Transcript> transcripts(AgentState agent) { return transcripts; }
         @Override public void configure(AgentState agent) { lastMission = agent.companyMission; }
         @Override public Identity create(String id, String name, String company, String goal, String mission) {
+            if (provisioningFailure != null) throw provisioningFailure;
             if (createEntered != null) { createEntered.countDown(); try { createRelease.await(3, TimeUnit.SECONDS); } catch (InterruptedException error) { throw new RuntimeException(error); } }
             return super.create(id, name, company, goal, mission);
         }
