@@ -52,6 +52,10 @@ public class ApiController {
         return ResponseEntity.status(201).body(agents.create(tenant(authorization), body.agent_Name(), body.company(), body.goal()));
     }
     @GetMapping("/agents/{id}") public AgentView get(@RequestHeader(value = "Authorization", required = false) String authorization, @PathVariable String id) { return agents.requireOwned(tenant(authorization), id); }
+    @GetMapping("/agents/{id}/phone-connection") public com.athnasia.swarmwatchsvc.provider.PhoneProvider.Connection phoneConnection(
+            @RequestHeader(value = "Authorization", required = false) String authorization, @PathVariable String id) {
+        return agents.phoneConnection(tenant(authorization), id);
+    }
     @DeleteMapping("/agents/{id}") public ResponseEntity<Void> delete(@RequestHeader(value = "Authorization", required = false) String authorization, @PathVariable String id) {
         agents.delete(tenant(authorization), id); return ResponseEntity.noContent().build();
     }

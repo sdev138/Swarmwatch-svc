@@ -1,6 +1,6 @@
 # Swarmwatch
 
-A Google-authenticated workspace for supervising 1–3 named agents. Each agent has a goal, a dedicated Inkbox phone number, a conversation history, and an observed-behavior sentiment score. A shared company mission guides every agent.
+A Google-authenticated workspace for supervising 1–3 named agents. Each agent has a goal, shared Inkbox iMessage calling, a conversation history, and an observed-behavior sentiment score. A shared company mission guides every agent.
 
 This repository is the Java 25 / Spring Boot service. The React dashboard is in [sdev138/nanda-frontend](https://github.com/sdev138/nanda-frontend), and the unchanged protocol reference is in [sdev138/personal-agent-protocol](https://github.com/sdev138/personal-agent-protocol). Clone these repositories beside each other to follow the commands below.
 
@@ -64,7 +64,9 @@ GPT-6-Luna runs with high reasoning. The separate Decisions endpoint, `/v1/decis
 
 New agents start at exactly `0.51`, labeled as awaiting their first assessment. The UI polls every four seconds, shows phone transcripts and peer conversations, and supports user direction, immediate check-ins, outbound call requests, agent collaboration, and deletion.
 
-Inkbox hosted voice answers calls on the agent's dedicated number. Its voice model is selected by Inkbox; it is not advertised as GPT-6-Luna. Recorded transcripts return to the service's conversation history and assessment context. Deleting an agent releases its Inkbox identity/number and removes its persisted state, with visible errors and retry paths when provider cleanup fails.
+New agents enable shared iMessage calling without claiming a dedicated phone number. In the inspector, text the current connection command to Inkbox's router, then call the contact Inkbox sends back. Each recipient must connect before the agent can call them. The router is retrieved at runtime and is not the agent's public number. Free accounts include a one-time organization-wide pool of 30 US/Canada call minutes; check Inkbox for current plan limits. Existing agents with dedicated numbers retain their calling path.
+
+Inkbox hosted voice answers calls for the identity. Its voice model is selected by Inkbox; it is not advertised as GPT-6-Luna. Recorded transcripts return to the service's conversation history and assessment context. Deleting an agent removes its Inkbox identity and persisted state, releasing any legacy dedicated number, with visible errors and retry paths when provider cleanup fails.
 
 ## Model tools
 
@@ -89,7 +91,7 @@ NANDA_COMPUTER_SMOKE=true ./gradlew test
 
 ## Discovery and protocol scope
 
-Nanda registration follows account verification, entry creation, entry verification, and public resolution. Polling is durable and no faster than once every 30 seconds. Agent phone numbers are the primary UI contact. Nanda currently requires a verified **email-derived** personal locator, so the Inkbox mailbox is used internally for registration; the API does not support phone-only personal registration. Registration status appears in the inspector.
+Nanda registration follows account verification, entry creation, entry verification, and public resolution. Polling is durable and no faster than once every 30 seconds. Shared-call connection instructions are the primary UI contact; legacy dedicated agents show their number. Nanda currently requires a verified **email-derived** personal locator, so the Inkbox mailbox is used internally for registration; the API does not support phone-only personal registration. Registration status appears in the inspector.
 
 Same-workspace agent collaboration records Personal Agent Protocol 1.0 message envelopes with an identified author. This is an internal adapter. It does not claim public PAP federation, verified external Poppy Sessions, a public OAuth server, or a telephony standard defined by PAP. Nanda's A2A card and PAP are distinct protocols. Registry deletion removes the public listing and the service-owned registration password; the external Nanda account is retained.
 

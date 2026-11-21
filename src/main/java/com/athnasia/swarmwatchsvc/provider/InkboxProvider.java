@@ -21,27 +21,24 @@ public class InkboxProvider implements PhoneProvider {
     private String path(String value) { return URLEncoder.encode(value, StandardCharsets.UTF_8); }
     public Identity create(String id, String name, String company, String goal, String mission) {
         VoiceInstructions.render(name, company, goal, mission);
-        var subscription = http.send("Inkbox", "GET", base + "/billing/subscription", headers(), null, false);
-        var capacity = subscription.path("entitlements").path("phone_numbers");
-        if (capacity.isIntegralNumber() && capacity.asLong() == 0)
-            throw new ProviderException("Inkbox account includes 0 dedicated phone numbers. Enable VoIP phone capacity in Inkbox before creating an agent.");
         String handle = "sw-" + id;
         var request = new LinkedHashMap<String, Object>();
         request.put("agent_handle", handle); request.put("display_name", name);
         request.put("mailbox", Collections.singletonMap("sending_domain", null));
-        request.put("phone_number", Map.of("type", "local", "incoming_call_action", "hosted_agent"));
+        request.put("imessage_enabled", true);
         var response = http.send("Inkbox", "POST", base + "/identities", headers(), request, false);
         try {
             String providerId = required(response, "id");
             handle = required(response, "agent_handle");
             String email = required(response, "email_address");
-            String phone = required(response.path("phone_number"), "number");
             var agent = new AgentState();
             agent.providerIdentityId = providerId; agent.name = name; agent.company = company; agent.goal = goal; agent.companyMission = mission;
             configure(agent);
             http.send("Inkbox", "PUT", base + "/phone/hosted-agent-config/authority-mode", headers(),
                     Map.of("agent_identity_id", providerId, "authority_mode", "contact_scoped"), false);
-            return new Identity(providerId, handle, email, phone);
+            http.send("Inkbox", "PUT", base + "/phone/incoming-call-action", headers(),
+                    Map.of("agent_identity_id", providerId, "incoming_call_action", "hosted_agent"), false);
+            return new Identity(providerId, handle, email, "");
         } catch (RuntimeException failure) {
             try { delete(handle); } catch (RuntimeException cleanupFailure) {
                 throw new ProviderException("Inkbox voice setup failed and identity cleanup needs retry. Delete the incomplete agent.");
@@ -59,9 +56,22 @@ public class InkboxProvider implements PhoneProvider {
         return result;
     }
     public void delete(String handle) { http.send("Inkbox", "DELETE", base + "/identities/" + path(handle), headers(), null, true); }
+    public Connection connection(AgentState agent) {
+        if (agent.phone != null && !agent.phone.isBlank())
+            return new Connection("dedicated_number", agent.phone, "", "");
+        var router = http.send("Inkbox", "GET", base + "/imessage/triage-number?agent_identity_id=" + path(agent.providerIdentityId), headers(), null, false);
+        return new Connection("shared_imessage_number", "", required(router, "number"), required(router, "connect_command"));
+    }
     public Call call(AgentState agent, String to, String reason) {
-        var response = http.send("Inkbox", "POST", base + "/phone/place-call", headers(), Map.of("origination", "dedicated_number",
-                "from_number", agent.phone, "to_number", to, "mode", "hosted_agent", "hosted_agent_authority_mode", "contact_scoped", "reason", reason), false);
+        var request = new LinkedHashMap<String, Object>();
+        request.put("to_number", to); request.put("mode", "hosted_agent");
+        request.put("hosted_agent_authority_mode", "contact_scoped"); request.put("reason", reason);
+        if (agent.phone == null || agent.phone.isBlank()) {
+            request.put("origination", "shared_imessage_number"); request.put("agent_identity_id", agent.providerIdentityId);
+        } else {
+            request.put("origination", "dedicated_number"); request.put("from_number", agent.phone);
+        }
+        var response = http.send("Inkbox", "POST", base + "/phone/place-call", headers(), request, false);
         return new Call(required(response, "id"), required(response, "status"));
     }
     public List<Transcript> transcripts(AgentState agent) {

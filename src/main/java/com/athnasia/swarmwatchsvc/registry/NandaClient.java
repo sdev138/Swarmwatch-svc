@@ -68,7 +68,9 @@ final class NandaClient implements Registrar {
 
     private Registration.Stage createEntry(Registration registration) {
         String token = signIn(registration);
-        String description = "Personal agent on Inkbox. Contact by phone: " + registration.phone() + ".";
+        String description = registration.phone() == null || registration.phone().isBlank()
+                ? "Personal agent on Inkbox. Shared iMessage calling: connect @" + registration.handle() + " through Inkbox."
+                : "Personal agent on Inkbox. Contact by phone: " + registration.phone() + ".";
         Reply reply = nanda("POST", "/api/v1/orgs", token, Map.of(
                 "org_id", registration.orgId(), "display_name", registration.name(), "hosting_path", "personal",
                 "contact_email", registration.email(), "registry_url", "https://inkbox.ai/a2a/" + registration.handle() + "/card",

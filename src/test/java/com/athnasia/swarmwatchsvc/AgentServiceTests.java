@@ -67,6 +67,7 @@ class AgentServiceTests {
         for (Runnable action : List.<Runnable>of(
                 () -> service.requireOwned("bob", alice.agent_Id()),
                 () -> service.conversation("bob", alice.agent_Id()),
+                () -> service.phoneConnection("bob", alice.agent_Id()),
                 () -> service.message("bob", alice.agent_Id(), "intrude"),
                 () -> service.call("bob", alice.agent_Id(), "+14155550111", "intrude"),
                 () -> service.collaborate("alice", alice.agent_Id(), bob.agent_Id(), "intrude"),

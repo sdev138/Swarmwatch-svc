@@ -25,6 +25,7 @@ class ApiContractTests {
     void localApiRequiresExactTokenBindsUuidAndEnforcesAgentCap() throws Exception {
         assertThat(request("GET", "/api/agents", null, null).statusCode()).isEqualTo(401);
         assertThat(request("GET", "/api/agents", null, "not-valid").statusCode()).isEqualTo(401);
+        assertThat(request("GET", "/api/agents/unknown/phone-connection", null, null).statusCode()).isEqualTo(401);
         String id = UUID.randomUUID().toString();
         var session = request("POST", "/api/session", "{\"user_id\":\"" + id + "\"}", "local-development-token");
         assertThat(session.statusCode()).isEqualTo(200);
@@ -42,8 +43,13 @@ class ApiContractTests {
             assertThat(agent.path("agent_Sentiment").asDouble()).isEqualTo(0.51);
             assertThat(agent.path("user_Id").asText()).isEqualTo(id);
             assertThat(agent.path("phone_number").asText()).contains("SIMULATED");
+            var connection = request("GET", "/api/agents/" + agent.path("agent_Id").asText() + "/phone-connection", null, "local-development-token");
+            assertThat(connection.statusCode()).isEqualTo(200);
+            assertThat(json.readTree(connection.body()).path("origination").asText()).isEqualTo("local");
+            assertThat(json.readTree(connection.body()).path("router_number").asText()).isEmpty();
         }
         assertThat(request("POST", "/api/agents", "{\"agent_Name\":\"Fourth\",\"company\":\"Acme\",\"goal\":\"Track releases\"}", "local-development-token").statusCode()).isEqualTo(409);
+        assertThat(request("GET", "/api/agents/unknown/phone-connection", null, "local-development-token").statusCode()).isEqualTo(404);
     }
 
     HttpResponse<String> request(String method, String path, String body, String token) throws Exception {

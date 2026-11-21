@@ -22,6 +22,7 @@ class ProviderContractTests {
     boolean failConfiguration;
     int phoneCapacity = 3;
     String responseReply;
+    String routerReply = "{\"number\":\"+14155550199\",\"connect_command\":\"connect @sw-agent-id\"}";
     final Secrets keys = new Secrets() { public String openAiKey() { return "fixture-openai"; } public String inkboxKey() { return "fixture-inkbox"; } };
 
     @BeforeEach void start() throws Exception {
@@ -37,8 +38,9 @@ class ProviderContractTests {
                 reply = responseReply == null ? "{\"id\":\"resp-fixture\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Release verified; one blocker remains.\"}]}]}" : responseReply;
             } else if (path.equals("/v1/decisions")) reply = scoreReply;
             else if (path.equals("/api/v1/billing/subscription")) reply = "{\"entitlements\":{\"phone_numbers\":" + phoneCapacity + "}}";
+            else if (path.startsWith("/api/v1/imessage/triage-number?")) reply = routerReply;
             else if (path.equals("/api/v1/identities") && exchange.getRequestMethod().equals("POST"))
-                reply = "{\"id\":\"ink-id\",\"agent_handle\":\"sw-agent-id\",\"email_address\":\"agent@inkboxmail.com\",\"phone_number\":{\"id\":\"number-id\",\"number\":\"+14155550100\"}}";
+                reply = "{\"id\":\"ink-id\",\"agent_handle\":\"sw-agent-id\",\"email_address\":\"agent@inkboxmail.com\",\"phone_number\":null}";
             else if (path.equals("/api/v1/phone/hosted-agent-config") && failConfiguration) { status = 502; reply = "{\"detail\":\"provider failure fixture-inkbox\"}"; }
             else if (path.startsWith("/api/v1/phone/calls?")) reply = "[{\"id\":\"call-id\",\"status\":\"completed\",\"direction\":\"inbound\"}]";
             else if (path.equals("/api/v1/phone/calls/call-id/transcripts"))
@@ -113,13 +115,17 @@ class ProviderContractTests {
         var provider = new InkboxProvider(HttpClient.newHttpClient(), json, keys, base + "/api/v1");
         var identity = provider.create("agent-id", "Scout", "Acme", "Verify releases", "Ship trustworthy software");
         assertThat(identity.email()).isEqualTo("agent@inkboxmail.com");
-        assertThat(identity.phone()).isEqualTo("+14155550100");
+        assertThat(identity.phone()).isEmpty();
         var create = requests.stream().filter(request -> request.path().equals("/api/v1/identities") && request.method().equals("POST")).findFirst().orElseThrow();
         assertThat(create.auth()).isEqualTo("fixture-inkbox");
         assertThat(create.body().path("mailbox").has("sending_domain")).isTrue();
         assertThat(create.body().path("mailbox").path("sending_domain").isNull()).isTrue();
-        assertThat(create.body().path("phone_number").path("type").asText()).isEqualTo("local");
-        assertThat(create.body().path("phone_number").path("incoming_call_action").asText()).isEqualTo("hosted_agent");
+        assertThat(create.body().has("phone_number")).isFalse();
+        assertThat(create.body().path("imessage_enabled").asBoolean()).isTrue();
+        var incoming = requests.stream().filter(r -> r.path().equals("/api/v1/phone/incoming-call-action")).findFirst().orElseThrow();
+        assertThat(incoming.method()).isEqualTo("PUT");
+        assertThat(incoming.body().path("agent_identity_id").asText()).isEqualTo("ink-id");
+        assertThat(incoming.body().path("incoming_call_action").asText()).isEqualTo("hosted_agent");
         assertThat(requests.stream().filter(r -> r.path().equals("/api/v1/phone/hosted-agent-config")).findFirst().orElseThrow().body().path("instructions").asText()).contains("Scout", "Acme", "Verify releases", "Ship trustworthy software");
         var call = provider.call(agent(), "+14155550111", "Confirm an appointment");
         assertThat(call.id()).isEqualTo("call-id");
@@ -135,12 +141,49 @@ class ProviderContractTests {
         assertThat(requests.getLast().path()).isEqualTo("/api/v1/identities/sw-agent-id");
         assertThat(requests.getLast().method()).isEqualTo("DELETE");
     }
-    @Test void zeroDedicatedPhoneCapacityStopsBeforeCreatingAnIdentity() {
+    @Test void zeroDedicatedPhoneCapacityDoesNotPreventSharedIdentityCreation() {
         phoneCapacity = 0;
         var provider = new InkboxProvider(HttpClient.newHttpClient(), json, keys, base + "/api/v1");
-        assertThatThrownBy(() -> provider.create("agent-id", "Scout", "Acme", "Verify releases", "Ship trustworthy software"))
-                .isInstanceOf(ProviderException.class).hasMessageContaining("0 dedicated phone numbers").hasMessageContaining("Inkbox");
-        assertThat(requests).noneMatch(request -> request.method().equals("POST"));
+        var identity = provider.create("agent-id", "Scout", "Acme", "Verify releases", "Ship trustworthy software");
+        assertThat(identity.id()).isEqualTo("ink-id");
+        assertThat(identity.phone()).isEmpty();
+        assertThat(requests).noneMatch(request -> request.path().startsWith("/api/v1/billing"));
+    }
+    @Test void sharedCallsSelectIdentityAndOmitDedicatedCallerNumber() {
+        var provider = new InkboxProvider(HttpClient.newHttpClient(), json, keys, base + "/api/v1");
+        var shared = agent(); shared.phone = "";
+        provider.call(shared, "+14155550111", "Confirm an appointment");
+        var body = requests.getLast().body();
+        assertThat(body.path("origination").asText()).isEqualTo("shared_imessage_number");
+        assertThat(body.path("agent_identity_id").asText()).isEqualTo("ink-id");
+        assertThat(body.has("from_number")).isFalse();
+        assertThat(body.path("to_number").asText()).isEqualTo("+14155550111");
+        assertThat(body.path("mode").asText()).isEqualTo("hosted_agent");
+    }
+    @Test void sharedConnectionUsesIdentityScopedRouterDataWithoutCachingIt() {
+        var provider = new InkboxProvider(HttpClient.newHttpClient(), json, keys, base + "/api/v1");
+        var shared = agent(); shared.phone = "";
+        var connection = provider.connection(shared);
+        assertThat(connection.origination()).isEqualTo("shared_imessage_number");
+        assertThat(connection.phone_number()).isEmpty();
+        assertThat(connection.router_number()).isEqualTo("+14155550199");
+        assertThat(connection.connect_command()).isEqualTo("connect @sw-agent-id");
+        assertThat(requests.getLast().path()).isEqualTo("/api/v1/imessage/triage-number?agent_identity_id=ink-id");
+        routerReply = "{\"number\":\"+14155550299\",\"connect_command\":\"connect @sw-agent-id\"}";
+        assertThat(provider.connection(shared).router_number()).isEqualTo("+14155550299");
+    }
+    @Test void dedicatedConnectionDoesNotFetchASharedRouter() {
+        var provider = new InkboxProvider(HttpClient.newHttpClient(), json, keys, base + "/api/v1");
+        var connection = provider.connection(agent());
+        assertThat(connection.origination()).isEqualTo("dedicated_number");
+        assertThat(connection.phone_number()).isEqualTo("+14155550100");
+        assertThat(connection.router_number()).isEmpty();
+        assertThat(requests).isEmpty();
+    }
+    @Test void incompleteRouterDataIsReportedRatherThanInventingANumber() {
+        var provider = new InkboxProvider(HttpClient.newHttpClient(), json, keys, base + "/api/v1");
+        var shared = agent(); shared.phone = ""; routerReply = "{}";
+        assertThatThrownBy(() -> provider.connection(shared)).isInstanceOf(ProviderException.class);
     }
     @Test void failedVoiceConfigurationCompensatesIdentityWithoutLeakingProviderBody() {
         failConfiguration = true;

@@ -7,11 +7,13 @@ import java.util.Map;
 public interface PhoneProvider {
     record Identity(String id, String handle, String email, String phone) {}
     record Call(String id, String status) {}
+    record Connection(String origination, String phone_number, String router_number, String connect_command) {}
     record Transcript(String id, String callId, long seq, String createdAt, String party,
             String text, Map<String, Object> raw) {}
     Identity create(String id, String name, String company, String goal, String mission);
     void configure(AgentState agent);
     void delete(String handle);
+    Connection connection(AgentState agent);
     Call call(AgentState agent, String toNumber, String reason);
     List<Transcript> transcripts(AgentState agent);
 }

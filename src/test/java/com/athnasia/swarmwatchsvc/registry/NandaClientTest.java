@@ -113,6 +113,17 @@ class NandaClientTest {
     }
 
     @Test
+    void sharedEntryUsesConnectionInstructionsWithoutInventingAPhoneNumber() {
+        reply("POST /api/v1/orgs", 201, owner(false));
+        Registration original = registration(Registration.Stage.ENTRY);
+        Registration shared = new Registration(original.tenantId(), original.agentId(), original.name(), original.company(),
+                original.goal(), original.email(), "", original.stage(), original.error(), original.startedAt(), original.updatedAt(), original.nextAttemptAt());
+        assertEquals(Registration.Stage.ENTRY_VERIFY, client.advance(shared));
+        assertEquals("Personal agent on Inkbox. Shared iMessage calling: connect @sw-example through Inkbox.",
+                request("POST /api/v1/orgs").body().path("description").asText());
+    }
+
+    @Test
     void registrationVerificationCannotClaimPublicActivation() {
         reply("GET /api/v1/orgs/inkbox-sw-example", 200, owner(false));
         mailbox("[{\"id\":\"entry\",\"from_address\":\"noreply@nandaindex.org\",\"subject\":\"Verify your NANDA Index registration\"}]");

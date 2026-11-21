@@ -56,6 +56,11 @@ public class AgentService {
         return agent;
     }
     public AgentView requireOwned(String tenant, String id) { return view(owned(tenant, id)); }
+    public PhoneProvider.Connection phoneConnection(String tenant, String id) {
+        var agent = active(tenant, id);
+        if (agent.providerIdentityId == null) throw new ApiException(409, "Agent identity setup is incomplete. Finish cleanup before reconnecting.");
+        return phones.connection(agent);
+    }
     private AgentView view(AgentState state) { return AgentView.of(state, repository.conversation(state.tenantId, state.id)); }
     public List<AgentView> list(String tenant) { return repository.agents(tenant).stream().map(this::view).toList(); }
     public String mission(String tenant) { return repository.mission(tenant); }
